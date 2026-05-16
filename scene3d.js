@@ -5,12 +5,14 @@
   const canvas = document.getElementById("scene3d");
   if (!canvas || typeof THREE === "undefined") return;
 
+  const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) || window.innerWidth < 768;
+
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
   camera.position.set(0, 0, 8);
 
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: !isMobile, alpha: true, powerPreference: "high-performance" });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobile ? 1 : 2));
   renderer.setClearColor(0x000000, 0);
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.15;
@@ -72,7 +74,9 @@
     const shape = roundedShape(w, h, Math.min(w, h) * 0.2);
     const geom = new THREE.ExtrudeGeometry(shape, {
       depth: 0.18, bevelEnabled: true,
-      bevelSize: 0.05, bevelThickness: 0.05, bevelSegments: 4, curveSegments: 18,
+      bevelSize: 0.05, bevelThickness: 0.05,
+      bevelSegments: isMobile ? 2 : 4,
+      curveSegments: isMobile ? 8 : 18,
     });
     geom.center();
     geom.computeBoundingBox();
@@ -102,7 +106,7 @@
 
   // ── Tile texture: subtle brand tint + logo centered ──
   function makeTileTexture(logoImg, brandHex, label) {
-    const SZ = 512;
+    const SZ = isMobile ? 256 : 512;
     const c = document.createElement("canvas");
     c.width = SZ; c.height = SZ;
     const ctx = c.getContext("2d");
@@ -162,7 +166,7 @@
 
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
-    tex.anisotropy = 8;
+    tex.anisotropy = isMobile ? 1 : 8;
     return tex;
   }
 
@@ -312,7 +316,7 @@
   }
 
   function makeGameTileTexture(game) {
-    const SZ = 512;
+    const SZ = isMobile ? 256 : 512;
     const c = document.createElement("canvas");
     c.width = SZ; c.height = SZ;
     drawGameTile(c, game, null); // initial-letter fallback
@@ -377,24 +381,36 @@
 
   const baseGeom = chipGeom(1.6, 1.6);
 
+  // On mobile only show the most important chips to reduce GPU load
+  const visibleLayout = isMobile ? layout.slice(0, 6) : layout;
+
   function placeholderTex(brand, label) {
     return makeTileTexture(null, brand, label);
   }
 
   function makeChip(tech, item, texture) {
-    const mat = new THREE.MeshPhysicalMaterial({
-      map: texture,
-      color: 0xffffff,
-      roughness: 0.32,
-      metalness: 0.0,
-      clearcoat: 0.95,
-      clearcoatRoughness: 0.12,
-      envMapIntensity: 1.25,
-      transmission: 0.06,
-      thickness: 0.4,
-      ior: 1.45,
-      side: THREE.DoubleSide,
-    });
+    const mat = isMobile
+      ? new THREE.MeshStandardMaterial({
+          map: texture,
+          color: 0xffffff,
+          roughness: 0.35,
+          metalness: 0.0,
+          envMapIntensity: 0.8,
+          side: THREE.FrontSide,
+        })
+      : new THREE.MeshPhysicalMaterial({
+          map: texture,
+          color: 0xffffff,
+          roughness: 0.32,
+          metalness: 0.0,
+          clearcoat: 0.95,
+          clearcoatRoughness: 0.12,
+          envMapIntensity: 1.25,
+          transmission: 0.06,
+          thickness: 0.4,
+          ior: 1.45,
+          side: THREE.DoubleSide,
+        });
     const mesh = new THREE.Mesh(baseGeom, mat);
     mesh.position.set(...item.pos);
     mesh.rotation.set(...item.rot);
@@ -418,7 +434,7 @@
   const techMap = {};
   techs.forEach((t) => { techMap[t.id] = t; });
 
-  for (const item of layout) {
+  for (const item of visibleLayout) {
     const tech = techMap[item.id];
     if (!tech) continue;
     const placeholder = placeholderTex(tech.brand, tech.label);
@@ -426,8 +442,8 @@
   }
 
   // Load real logos and swap textures
-  for (let i = 0; i < layout.length; i++) {
-    const item = layout[i];
+  for (let i = 0; i < visibleLayout.length; i++) {
+    const item = visibleLayout[i];
     const tech = techMap[item.id];
     const mesh = chips[i];
     if (!tech || !mesh) continue;
@@ -483,6 +499,7 @@
   });
 
   let scrollY = 0;
+  let sceneHidden = false;
   function onScroll() {
     scrollY = window.scrollY;
     // Fade out canvas as user scrolls past hero so chips don't interfere with text
@@ -491,12 +508,18 @@
     const fadeEnd = vh * 1.05;
     const tFade = Math.max(0, Math.min(1, (scrollY - fadeStart) / (fadeEnd - fadeStart)));
     canvas.style.opacity = String(1 - tFade * 0.85); // floor at 0.15
+    sceneHidden = scrollY > vh * 1.5;
   }
   window.addEventListener("scroll", onScroll, { passive: true });
   onScroll();
 
   const clock = new THREE.Clock();
+  let rafId = null;
   function animate() {
+    rafId = requestAnimationFrame(animate);
+
+    if (sceneHidden) return;
+
     const t = clock.getElapsedTime();
     mouse.x += (mouse.tx - mouse.x) * 0.05;
     mouse.y += (mouse.ty - mouse.y) * 0.05;
@@ -518,7 +541,6 @@
     camera.lookAt(0, 0, 0);
 
     renderer.render(scene, camera);
-    requestAnimationFrame(animate);
   }
   animate();
 
